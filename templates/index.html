@@ -3,6 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 120 120'%3E%3Crect width='120' height='120' rx='28' fill='%23e2603a'/%3E%3Cpath d='M60 30 C85 30 105 50 105 75 C105 95 90 108 72 110 L72 122 L58 108 C42 105 30 90 30 72 C30 48 48 30 60 30 Z' fill='%23fff7f2'/%3E%3Cpath d='M60 35 C60 70 70 90 95 98' stroke='%23e2603a' stroke-width='4' fill='none' stroke-linecap='round'/%3E%3C/svg%3E" />
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600&family=IBM+Plex+Sans:wght@400;500&display=swap" rel="stylesheet">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/marked/9.1.6/marked.min.js"></script>
@@ -90,6 +91,25 @@
     background: var(--panel-hover);
     color: var(--text);
   }
+
+  .side-item {
+    cursor: pointer;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    margin-bottom: 2px;
+  }
+  .side-item:hover {
+    background: var(--panel-hover);
+  }
+
+  #chatList {
+    overflow-y: auto;
+    flex: 1;
+    min-height: 0;
+  }
+  #chatList::-webkit-scrollbar { width: 5px; }
+  #chatList::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
 
   #sidebar .foot {
     margin-top: auto;
@@ -337,9 +357,9 @@
     <svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M12 5V19M5 12H19" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
     New chat
   </button>
-  <div class="side-section">Current session</div>
-  <div class="side-item active">Sage conversation</div>
-  <div class="foot">Memory resets on New chat</div>
+  <div class="side-section">Your chats</div>
+  <div id="chatList"></div>
+  <div class="foot">Each chat remembers its own history</div>
 </div>
 
 <div id="main">
@@ -412,6 +432,8 @@
     }
   });
 
+  let currentChatId = null;
+
   function fillAndSend(text) {
     input.value = text;
     sendMessage();
@@ -421,6 +443,72 @@
     if (welcome.style.display !== "none") {
       welcome.style.display = "none";
       chatInner.style.display = "block";
+    }
+  }
+
+  function showWelcome() {
+    chatInner.innerHTML = "";
+    chatInner.style.display = "none";
+    welcome.style.display = "flex";
+  }
+
+  // ---- Sidebar: list of saved chats ----
+  async function loadChatList(activeId) {
+    const res = await fetch("/chats");
+    const data = await res.json();
+    const listEl = document.getElementById("chatList");
+    listEl.innerHTML = "";
+
+    data.chats.forEach((c) => {
+      const item = document.createElement("div");
+      item.className = "side-item" + (c.id === activeId ? " active" : "");
+      item.textContent = c.title || "New chat";
+      item.onclick = () => openChat(c.id);
+      listEl.appendChild(item);
+    });
+  }
+
+  // ---- Load one saved chat's messages into the main pane ----
+  async function openChat(chatId) {
+    const res = await fetch(`/chats/${chatId}`);
+    if (!res.ok) return;
+    const data = await res.json();
+
+    currentChatId = chatId;
+    chatInner.innerHTML = "";
+
+    if (data.messages.length === 0) {
+      showWelcome();
+    } else {
+      welcome.style.display = "none";
+      chatInner.style.display = "block";
+      data.messages.forEach((m) => addBubble(m.role === "assistant" ? "bot" : "user", m.content));
+    }
+
+    loadChatList(chatId);
+  }
+
+  // ---- Start a brand new chat (old one stays saved on the server) ----
+  async function newChat() {
+    const res = await fetch("/new_chat", { method: "POST" });
+    const data = await res.json();
+    currentChatId = data.chat_id;
+    showWelcome();
+    loadChatList(currentChatId);
+  }
+
+  // ---- On page load: restore whatever chat was active, and populate the sidebar ----
+  async function init() {
+    const res = await fetch("/chats");
+    const data = await res.json();
+
+    if (data.current_chat_id) {
+      await openChat(data.current_chat_id);
+    } else if (data.chats.length > 0) {
+      await openChat(data.chats[0].id);
+    } else {
+      showWelcome();
+      loadChatList(null);
     }
   }
 
@@ -504,6 +592,8 @@
         addBubble("bot", "Something went wrong: " + data.error);
       } else {
         addBubble("bot", data.reply);
+        currentChatId = data.chat_id;
+        loadChatList(currentChatId); // refresh sidebar in case this chat just got its title
       }
     } catch (err) {
       hideTyping();
@@ -514,12 +604,7 @@
     input.focus();
   }
 
-  async function newChat() {
-    await fetch("/reset", { method: "POST" });
-    chatInner.innerHTML = "";
-    chatInner.style.display = "none";
-    welcome.style.display = "flex";
-  }
+  init();
 </script>
 
 </body>
